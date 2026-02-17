@@ -1,0 +1,7 @@
+bin
+obj
+.vs
+*.pdb
+/Art-Source
+/.idea
+/Source/PawnEditor/.idea
