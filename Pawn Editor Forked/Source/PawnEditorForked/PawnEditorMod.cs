@@ -33,23 +33,23 @@ public class PawnEditorMod : Mod
         LongEventHandler.ExecuteWhenFinished(delegate
         {
             foreach (var assembly in content.assemblies.loadedAssemblies)
-            foreach (var type in assembly.GetTypes())
-                if (type.TryGetAttribute<ModCompatAttribute>(out var modCompat) && modCompat.ShouldActivate())
-                {
-                    var method = AccessTools.Method(type, "Activate", Type.EmptyTypes);
-                    method?.Invoke(null, Array.Empty<object>());
-                    method = AccessTools.Method(type, "Activate", new[] { typeof(Harmony) });
-                    method?.Invoke(null, new object[] { Harm });
-                    var field = AccessTools.Field(type, "Active");
-                    field?.SetValue(null, true);
-                    method = AccessTools.Method(type, "GetName");
-                    var name = (string)method?.Invoke(null, Array.Empty<object>());
-                    method = AccessTools.Method(type, "get_Name");
-                    name ??= (string)method?.Invoke(null, Array.Empty<object>());
-                    field = AccessTools.Field(type, "Name");
-                    name ??= (string)field?.GetValue(null);
-                    if (name != null) Log.Message($"[Pawn Editor] {name} compatibility active.");
-                }
+                foreach (var type in assembly.GetTypes())
+                    if (type.TryGetAttribute<ModCompatAttribute>(out var modCompat) && modCompat.ShouldActivate())
+                    {
+                        var method = AccessTools.Method(type, "Activate", Type.EmptyTypes);
+                        method?.Invoke(null, Array.Empty<object>());
+                        method = AccessTools.Method(type, "Activate", new[] { typeof(Harmony) });
+                        method?.Invoke(null, new object[] { Harm });
+                        var field = AccessTools.Field(type, "Active");
+                        field?.SetValue(null, true);
+                        method = AccessTools.Method(type, "GetName");
+                        var name = (string)method?.Invoke(null, Array.Empty<object>());
+                        method = AccessTools.Method(type, "get_Name");
+                        name ??= (string)method?.Invoke(null, Array.Empty<object>());
+                        field = AccessTools.Field(type, "Name");
+                        name ??= (string)field?.GetValue(null);
+                        if (name != null) Log.Message($"[Pawn Editor] {name} compatibility active.");
+                    }
 
             Settings = GetSettings<PawnEditorSettings>();
             ApplySettings();
@@ -115,10 +115,10 @@ public class PawnEditorMod : Mod
     }
     public static void AddDevButtonPostfix(DebugWindowsOpener __instance)
     {
-        // FIX #016: The original transpiler injected a ButtonIcon call into DrawButtons' IL,
-        // but broke when RW 1.6 changed the IL layout. This postfix achieves the same result
-        // by appending to the WidgetRow after DrawButtons finishes, placing the Pawn Editor
-        // icon right after the vanilla dev toolbar buttons (God Mode, etc.).
+        // FIX #016: The old version drew a standalone button at a fixed screen position,
+        // completely disconnected from the debug toolbar. This version appends to the
+        // WidgetRow used by DrawButtons, placing the icon inline next to God Mode etc.
+        // Harmony auto-injects __instance because it matches the patched method's type.
         if (__instance.widgetRow == null) return;
 
         if (__instance.widgetRow.ButtonIcon(TexPawnEditor.OpenPawnEditor, "PawnEditor.CharacterEditor".Translate()))
@@ -210,8 +210,11 @@ public class PawnEditorMod : Mod
         return codes;
     }
 
-    public static IEnumerable<Gizmo> AddEditButton(IEnumerable<Gizmo> gizmos, Pawn __instance) =>
-        gizmos.Append(new Command_Action
+    public static IEnumerable<Gizmo> AddEditButton(IEnumerable<Gizmo> gizmos, Pawn __instance)
+    {
+        if (!Prefs.DevMode || !DebugSettings.godMode) return gizmos;
+
+        return gizmos.Append(new Command_Action
         {
             defaultLabel = "PawnEditor.Edit".Translate(),
             defaultDesc = "PawnEditor.Edit.Desc".Translate(),
@@ -221,6 +224,7 @@ public class PawnEditorMod : Mod
                 PawnEditor.Select(__instance);
             }
         });
+    }
 
 
     public static void Notify_ConfigurePawns()

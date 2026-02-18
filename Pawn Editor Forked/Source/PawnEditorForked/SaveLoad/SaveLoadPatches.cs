@@ -12,6 +12,16 @@ namespace PawnEditor;
 
 public static partial class SaveLoadUtility
 {
+    private static readonly Dictionary<Pawn, int> pawnCompatibilitySeeds = new();
+
+    public static int CompatibilitySeedFor(Pawn pawn)
+    {
+        if (pawn == null) return -1;
+        return pawnCompatibilitySeeds.TryGetValue(pawn, out var seed) && seed > 0
+            ? seed
+            : pawn.thingIDNumber;
+    }
+
     public static void Notify_DeepSaved(object __0)
     {
         if (!currentlyWorking) return;
@@ -45,11 +55,23 @@ public static partial class SaveLoadUtility
 
     public static bool ReassignLoadID(ref int value, string label)
     {
+        if (!currentlyWorking) return true;
+
         var isLoadId = label.Equals("loadID", StringComparison.OrdinalIgnoreCase);
         var isThingIdLabel = label.Equals("id", StringComparison.OrdinalIgnoreCase) || label.Equals("thingIDNumber", StringComparison.OrdinalIgnoreCase);
 
         if ((isLoadId || isThingIdLabel) && Scribe.mode == LoadSaveMode.PostLoadInit)
         {
+            // Preserve identity when loading over an existing pawn, but still remap for newly
+            // created pawns loaded from file (to avoid duplicate Thing IDs).
+            if (isThingIdLabel && Scribe.loader.curParent is Pawn && !remapPawnThingIds)
+                return true;
+
+            // Keep social compatibility stable for cloned pawns:
+            // store original pawn ThingID as compatibility seed before remap.
+            if (isThingIdLabel && Scribe.loader.curParent is Pawn pawnForSeed && remapPawnThingIds && value > 0)
+                pawnCompatibilitySeeds[pawnForSeed] = value;
+
             // Fork fix: RimWorld Thing IDs are typically saved under label "id" (Thing.thingIDNumber).
             // Only remap those when the current parent is a Thing to avoid touching unrelated int fields.
             if (isThingIdLabel && Scribe.loader.curParent is not Thing)
@@ -92,5 +114,30 @@ public static partial class SaveLoadUtility
     public static void ClearCurrentPawn()
     {
         currentPawn = null;
+    }
+}
+
+[HarmonyPatch(typeof(Pawn_RelationsTracker), nameof(Pawn_RelationsTracker.CompatibilityWith))]
+public static class Patch_PawnCompatibility_UseSeed
+{
+    private static readonly System.Reflection.MethodInfo offsetMethod =
+        AccessTools.Method(typeof(Pawn_RelationsTracker), "ConstantPerPawnsPairCompatibilityOffset");
+
+    public static void Postfix(Pawn_RelationsTracker __instance, Pawn otherPawn, ref float __result)
+    {
+        if (__instance?.pawn == null || otherPawn == null || offsetMethod == null) return;
+        if (__instance.pawn == otherPawn || __instance.pawn.def != otherPawn.def) return;
+
+        try
+        {
+            var currentOffset = (float)offsetMethod.Invoke(__instance, new object[] { otherPawn.thingIDNumber });
+            var seededId = SaveLoadUtility.CompatibilitySeedFor(otherPawn);
+            var seededOffset = (float)offsetMethod.Invoke(__instance, new object[] { seededId });
+            __result = __result - currentOffset + seededOffset;
+        }
+        catch
+        {
+            // Keep vanilla result if reflection fails.
+        }
     }
 }

@@ -14,6 +14,7 @@ namespace PawnEditor;
 public static partial class SaveLoadUtility
 {
     private static bool currentlyWorking;
+    private static bool remapPawnThingIds;
     private static ILoadReferenceable currentItem;
     private static Pawn currentPawn;
     private static readonly HashSet<ILoadReferenceable> savedItems = new();
@@ -131,6 +132,7 @@ public static partial class SaveLoadUtility
             }
 
 
+            remapPawnThingIds = item is Pawn pawnToLoad && pawnToLoad.thingIDNumber <= 0;
             currentlyWorking = true;
             currentItem = item as ILoadReferenceable;
             currentPawn = parentPawn;
@@ -159,6 +161,7 @@ public static partial class SaveLoadUtility
             savedItems.Clear();
             loadInfo.Clear();
             currentlyWorking = false;
+            remapPawnThingIds = false;
             currentItem = null;
             currentPawn = null;
             UnApplyPatches();
