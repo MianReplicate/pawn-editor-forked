@@ -256,8 +256,10 @@ public static partial class PawnEditor
             new("PawnEditor.Add.PawnKind".Translate(), () => Find.WindowStack.Add(new ListingMenu_PawnKindDef(category, AddPawnKind))),
             new("PawnEditor.Add.Saved".Translate(category.Label()), delegate
             {
-                var pawn = new Pawn();
-                SaveLoadUtility.LoadItem(pawn, p => AddPawn(p, category).HandleResult(), typePostfix: category.ToString());
+                BlueprintLoadUtility.LoadPawnBlueprint(category.ToString(), newPawn =>
+                {
+                    AddPawn(newPawn, category).HandleResult();
+                });
             })
         };
 
@@ -289,6 +291,9 @@ public static partial class PawnEditor
     {
         return new ConditionalInfo(CanUsePoints(addedPawn), new SuccessInfo(() =>
         {
+            if (!Pregame && selectedFaction != null && addedPawn.Faction != selectedFaction)
+                addedPawn.SetFaction(selectedFaction);
+
             if (Pregame)
                 if (category == PawnCategory.Humans)
                 {
@@ -312,10 +317,37 @@ public static partial class PawnEditor
                     }
                 }
             else
+            {
                 addedPawn.teleporting = true;
-            Find.WorldPawns.PassToWorld(addedPawn, PawnDiscardDecideMode.KeepForever);
-            addedPawn.teleporting = false;
+                var spawned = false;
+                if (category == PawnCategory.Humans && selectedFaction == Faction.OfPlayer && Find.CurrentMap != null)
+                {
+                    try
+                    {
+                        GenSpawn.Spawn(addedPawn, CellFinder.RandomCell(Find.CurrentMap), Find.CurrentMap);
+                        try
+                        {
+                            addedPawn.Notify_Teleported();
+                            EnsurePawnGraphicsInitialized(addedPawn);
+                        }
+                        catch
+                        {
+                        }
+                        spawned = true;
+                    }
+                    catch
+                    {
+                        spawned = false;
+                    }
+                }
+
+                if (!spawned)
+                    Find.WorldPawns.PassToWorld(addedPawn, PawnDiscardDecideMode.KeepForever);
+                addedPawn.teleporting = false;
+            }
+
             PawnList.UpdateCache(selectedFaction, category);
+            NotifyColonistBarsDirty();
 
             TabWorker_AnimalMech.Notify_PawnAdded(category);
             Notify_PointsUsed();

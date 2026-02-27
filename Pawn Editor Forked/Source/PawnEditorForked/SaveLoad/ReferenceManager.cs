@@ -12,6 +12,7 @@ namespace PawnEditor;
 public static partial class SaveLoadUtility
 {
     private static readonly Dictionary<(IExposable, string), (string, Type)> loadInfo = new();
+    private static readonly HashSet<string> missingPawnRefsLogged = new();
 
     /// <summary>
     /// This is where Pawn Editor accesses the XML for saving and loading pawns. <paramref name="label"/> is the name of the xml node name, and <paramref name="refee"/> is the type of data loaded from that location.
@@ -192,7 +193,8 @@ public static partial class SaveLoadUtility
                         if ((pawn.Name == null ? pawn.KindLabel : pawn.Name.ToStringFull) == data)
                             return pawn;
 
-                Log.Warning($"[PawnEditor] Failed to find pawn with name {data}");
+                if (!data.NullOrEmpty() && missingPawnRefsLogged.Add(data))
+                    Log.Warning($"[PawnEditor] Failed to find pawn with name {data}");
                 return null;
             }
 

@@ -21,6 +21,7 @@
     <!-- Add Pawn -->
     <PawnEditor.Add.PawnKind>Add pawn from PawnKindDef</PawnEditor.Add.PawnKind>
     <PawnEditor.Add.Saved>Add saved {0}</PawnEditor.Add.Saved>
+    <PawnEditor.Add.SavedStable>Add saved {0} (stable clone)</PawnEditor.Add.SavedStable>
     <PawnEditor.Add.Random>Add random {0} ({1} points)</PawnEditor.Add.Random>
     <PawnEditor.Add.OtherSave>Add pawn from other save</PawnEditor.Add.OtherSave>
     <PawnEditor.Add.Backer>Add special pawn</PawnEditor.Add.Backer>
@@ -36,6 +37,9 @@
 
     <!-- Load and Randomize -->
     <PawnEditor.LoadPawn>Load pawn</PawnEditor.LoadPawn>
+    <PawnEditor.LoadPawnReplace>Load pawn (replace selected)</PawnEditor.LoadPawnReplace>
+    <PawnEditor.LoadPawnAsClone>Load pawn as new clone</PawnEditor.LoadPawnAsClone>
+    <PawnEditor.DuplicatePawn>Duplicate pawn</PawnEditor.DuplicatePawn>
     <PawnEditor.LoadFaction>Load faction</PawnEditor.LoadFaction>
     <PawnEditor.Randomize>Randomize</PawnEditor.Randomize>
     <PawnEditor.AllIncludingFaction>all - including faction</PawnEditor.AllIncludingFaction>
@@ -256,4 +260,7 @@
     <!-- Fork fixes -->
     <PawnEditor.SelectBodyPart>Select a specific body part first.</PawnEditor.SelectBodyPart>
     <PawnEditor.MechNoOverseer>{0} has no overseer — assign a Mechanitor colonist or the mech will go rogue.</PawnEditor.MechNoOverseer>
+
+    <!-- Blueprint system -->
+    <PawnEditor.SaveBlueprint>Save as Blueprint (portable)</PawnEditor.SaveBlueprint>
 </LanguageData>

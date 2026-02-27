@@ -9,6 +9,8 @@ namespace PawnEditor;
 
 public partial class PawnEditor
 {
+    private static readonly HashSet<int> pawnValueWarningIds = new();
+
     public static void ResetPoints()
     {
         remainingPoints = PawnEditorMod.Settings.PointLimit;
@@ -63,39 +65,110 @@ public partial class PawnEditor
             remainingPoints -= amount.Value;
         else
         {
-            var value = 0f;
-            if (Pregame)
+            try
             {
-                value += ValueOfPawns(Find.GameInitData.startingAndOptionalPawns);
-                value += ValueOfPawns(StartingThingsManager.GetPawns(PawnCategory.Animals));
-                value += ValueOfPawns(StartingThingsManager.GetPawns(PawnCategory.Mechs));
-                value += ValueOfThings(StartingThingsManager.GetStartingThingsNear());
-                value += ValueOfThings(StartingThingsManager.GetStartingThingsFar());
+                var value = 0f;
+                if (Pregame)
+                {
+                    value += ValueOfPawns(Find.GameInitData.startingAndOptionalPawns);
+                    value += ValueOfPawns(StartingThingsManager.GetPawns(PawnCategory.Animals));
+                    value += ValueOfPawns(StartingThingsManager.GetPawns(PawnCategory.Mechs));
+                    value += ValueOfThings(StartingThingsManager.GetStartingThingsNear());
+                    value += ValueOfThings(StartingThingsManager.GetStartingThingsFar());
+                }
+                else
+                {
+                    AllPawns.UpdateCache(PawnEditorMod.Settings.CountNPCs ? null : Faction.OfPlayer, PawnCategory.All);
+                    value += ValueOfPawns(AllPawns.GetList());
+                    value += ValueOfThings(ColonyInventory.AllItemsInInventory());
+                }
+
+                remainingPoints -= value - cachedValue;
+                cachedValue = value;
             }
-            else
+            catch (Exception ex)
             {
-                AllPawns.UpdateCache(PawnEditorMod.Settings.CountNPCs ? null : Faction.OfPlayer, PawnCategory.All);
-                value += ValueOfPawns(AllPawns.GetList());
-                value += ValueOfThings(ColonyInventory.AllItemsInInventory());
+                Log.Error($"[Pawn Editor] Failed to recalculate points safely. Keeping previous points values. {ex}");
             }
-
-
-            remainingPoints -= value - cachedValue;
-            cachedValue = value;
         }
     }
 
-    private static float ValueOfPawns(IEnumerable<Pawn> pawns) => pawns.Sum(GetPawnValue);
-    private static float ValueOfThings(IEnumerable<Thing> things) => things.Sum(GetThingValue);
-    private static float GetThingValue(Thing thing) => thing.MarketValue * thing.stackCount;
+    private static float ValueOfPawns(IEnumerable<Pawn> pawns)
+    {
+        if (pawns == null) return 0f;
+        var total = 0f;
+        foreach (var pawn in pawns) total += GetPawnValue(pawn);
+        return total;
+    }
+
+    private static float ValueOfThings(IEnumerable<Thing> things)
+    {
+        if (things == null) return 0f;
+        var total = 0f;
+        foreach (var thing in things) total += GetThingValue(thing);
+        return total;
+    }
+
+    private static float GetThingValue(Thing thing)
+    {
+        try
+        {
+            return thing?.MarketValue * thing?.stackCount ?? 0f;
+        }
+        catch
+        {
+            return 0f;
+        }
+    }
 
     private static float GetPawnValue(Pawn pawn)
     {
-        var num = pawn.MarketValue;
+        if (pawn == null) return 0f;
+
+        var num = 0f;
+        try
+        {
+            num += pawn.MarketValue;
+        }
+        catch (Exception ex)
+        {
+            WarnPawnValueError(pawn, "MarketValue", ex);
+        }
+
         if (pawn.apparel != null)
-            num += pawn.apparel.WornApparel.Sum(t => t.MarketValue);
+        {
+            try
+            {
+                foreach (var apparel in pawn.apparel.WornApparel)
+                    num += apparel?.MarketValue ?? 0f;
+            }
+            catch (Exception ex)
+            {
+                WarnPawnValueError(pawn, "Apparel", ex);
+            }
+        }
+
         if (pawn.equipment != null)
-            num += pawn.equipment.AllEquipmentListForReading.Sum(t => t.MarketValue);
+        {
+            try
+            {
+                foreach (var eq in pawn.equipment.AllEquipmentListForReading)
+                    num += eq?.MarketValue ?? 0f;
+            }
+            catch (Exception ex)
+            {
+                WarnPawnValueError(pawn, "Equipment", ex);
+            }
+        }
+
         return num;
+    }
+
+    private static void WarnPawnValueError(Pawn pawn, string component, Exception ex)
+    {
+        var id = pawn?.thingIDNumber ?? -1;
+        if (!pawnValueWarningIds.Add(id)) return;
+        Log.Warning($"[Pawn Editor] Failed to evaluate pawn value component '{component}' for {pawn?.LabelCap ?? "<null>"} ({pawn?.ThingID ?? "no-id"}). " +
+                    $"Points were recalculated with partial data. {ex.GetType().Name}: {ex.Message}");
     }
 }

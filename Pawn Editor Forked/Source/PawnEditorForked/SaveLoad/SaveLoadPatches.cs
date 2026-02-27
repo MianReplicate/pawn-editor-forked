@@ -12,15 +12,7 @@ namespace PawnEditor;
 
 public static partial class SaveLoadUtility
 {
-    private static readonly Dictionary<Pawn, int> pawnCompatibilitySeeds = new();
-
-    public static int CompatibilitySeedFor(Pawn pawn)
-    {
-        if (pawn == null) return -1;
-        return pawnCompatibilitySeeds.TryGetValue(pawn, out var seed) && seed > 0
-            ? seed
-            : pawn.thingIDNumber;
-    }
+    private static readonly Dictionary<int, int> compatibilitySeedByThingId = new();
 
     public static void Notify_DeepSaved(object __0)
     {
@@ -55,30 +47,34 @@ public static partial class SaveLoadUtility
 
     public static bool ReassignLoadID(ref int value, string label)
     {
-        if (!currentlyWorking) return true;
-
         var isLoadId = label.Equals("loadID", StringComparison.OrdinalIgnoreCase);
         var isThingIdLabel = label.Equals("id", StringComparison.OrdinalIgnoreCase) || label.Equals("thingIDNumber", StringComparison.OrdinalIgnoreCase);
 
         if ((isLoadId || isThingIdLabel) && Scribe.mode == LoadSaveMode.PostLoadInit)
         {
-            // Preserve identity when loading over an existing pawn, but still remap for newly
-            // created pawns loaded from file (to avoid duplicate Thing IDs).
-            if (isThingIdLabel && Scribe.loader.curParent is Pawn && !remapPawnThingIds)
-                return true;
-
-            // Keep social compatibility stable for cloned pawns:
-            // store original pawn ThingID as compatibility seed before remap.
-            if (isThingIdLabel && Scribe.loader.curParent is Pawn pawnForSeed && remapPawnThingIds && value > 0)
-                pawnCompatibilitySeeds[pawnForSeed] = value;
-
             // Fork fix: RimWorld Thing IDs are typically saved under label "id" (Thing.thingIDNumber).
             // Only remap those when the current parent is a Thing to avoid touching unrelated int fields.
             if (isThingIdLabel && Scribe.loader.curParent is not Thing)
                 return true;
+
             Find.UniqueIDsManager.wasLoaded = true;
 
-            value = Scribe.loader.curParent switch
+            if (isThingIdLabel && Scribe.loader.curParent is Pawn loadedPawn)
+            {
+                var loadedThingId = value;
+                if (ReferenceEquals(loadedPawn, currentItem) && currentItem is Pawn existingPawn && existingPawn.thingIDNumber > 0)
+                {
+                    value = existingPawn.thingIDNumber;
+                    compatibilitySeedByThingId.Remove(value);
+                    return true;
+                }
+
+                value = Find.UniqueIDsManager.GetNextThingID();
+                RegisterCompatibilitySeed(value, loadedThingId);
+                return true;
+            }
+
+            var nextId = Scribe.loader.curParent switch
             {
                 Hediff => Find.UniqueIDsManager.GetNextHediffID(),
                 Lord => Find.UniqueIDsManager.GetNextLordID(),
@@ -92,18 +88,61 @@ public static partial class SaveLoadUtility
                 Job => Find.UniqueIDsManager.GetNextJobID(),
                 Gene => Find.UniqueIDsManager.GetNextGeneID(),
                 Battle => Find.UniqueIDsManager.GetNextBattleID(),
+                Ability => TryInvokeUniqueIdMethod("GetNextAbilityID"),
                 Thing => Find.UniqueIDsManager.GetNextThingID(),
                 _ => -1
             };
 
-            if (value == -1)
+            if (nextId <= 0)
             {
-                Log.Error($"Unrecognized item in ID reassignment: {Scribe.loader.curParent}");
+                Log.Warning($"[PawnEditor] Unrecognized item in ID reassignment: {Scribe.loader.curParent}. Keeping loaded value {value}.");
                 return true;
             }
+
+            value = nextId;
         }
 
         return true;
+    }
+
+    private static int TryInvokeUniqueIdMethod(string methodName)
+    {
+        var method = AccessTools.Method(typeof(UniqueIDsManager), methodName, Type.EmptyTypes);
+        if (method == null) return -1;
+        try
+        {
+            return (int)method.Invoke(Find.UniqueIDsManager, Array.Empty<object>());
+        }
+        catch
+        {
+            return -1;
+        }
+    }
+
+    private static void RegisterCompatibilitySeed(int pawnThingId, int loadedThingId)
+    {
+        if (pawnThingId <= 0 || loadedThingId <= 0 || pawnThingId == loadedThingId) return;
+        compatibilitySeedByThingId[pawnThingId] = loadedThingId;
+    }
+
+    public static int GetCompatibilitySeedThingId(Thing thing)
+    {
+        if (thing is not Pawn pawn) return thing?.thingIDNumber ?? -1;
+        var id = pawn.thingIDNumber;
+        return compatibilitySeedByThingId.TryGetValue(id, out var seed) ? seed : id;
+    }
+
+    public static IEnumerable<CodeInstruction> UseCompatibilitySeedInCompatibilityWith(IEnumerable<CodeInstruction> instructions)
+    {
+        var thingIdField = AccessTools.Field(typeof(Thing), nameof(Thing.thingIDNumber));
+        var replacement = AccessTools.Method(typeof(SaveLoadUtility), nameof(GetCompatibilitySeedThingId));
+        foreach (var instruction in instructions)
+        {
+            if (instruction.LoadsField(thingIdField))
+                yield return new CodeInstruction(OpCodes.Call, replacement);
+            else
+                yield return instruction;
+        }
     }
 
     public static void AssignCurrentPawn(Pawn __instance)
@@ -114,30 +153,5 @@ public static partial class SaveLoadUtility
     public static void ClearCurrentPawn()
     {
         currentPawn = null;
-    }
-}
-
-[HarmonyPatch(typeof(Pawn_RelationsTracker), nameof(Pawn_RelationsTracker.CompatibilityWith))]
-public static class Patch_PawnCompatibility_UseSeed
-{
-    private static readonly System.Reflection.MethodInfo offsetMethod =
-        AccessTools.Method(typeof(Pawn_RelationsTracker), "ConstantPerPawnsPairCompatibilityOffset");
-
-    public static void Postfix(Pawn_RelationsTracker __instance, Pawn otherPawn, ref float __result)
-    {
-        if (__instance?.pawn == null || otherPawn == null || offsetMethod == null) return;
-        if (__instance.pawn == otherPawn || __instance.pawn.def != otherPawn.def) return;
-
-        try
-        {
-            var currentOffset = (float)offsetMethod.Invoke(__instance, new object[] { otherPawn.thingIDNumber });
-            var seededId = SaveLoadUtility.CompatibilitySeedFor(otherPawn);
-            var seededOffset = (float)offsetMethod.Invoke(__instance, new object[] { seededId });
-            __result = __result - currentOffset + seededOffset;
-        }
-        catch
-        {
-            // Keep vanilla result if reflection fails.
-        }
     }
 }

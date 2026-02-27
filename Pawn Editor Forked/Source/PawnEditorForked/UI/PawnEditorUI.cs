@@ -2,6 +2,7 @@
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using HarmonyLib;
 using LudeonTK;
 using PawnEditor.Utils;
 using RimWorld;
@@ -179,8 +180,12 @@ public static partial class PawnEditor
         if (lastRandomization != null && Widgets.ButtonImageWithBG(randomRect.TakeRightPart(20), TexUI.RotRightTex, new Vector2(12, 12)))
         {
             var label = lastRandomization.Label.ToLower();
-            lastRandomization = options.First(op => op.Label.Contains(label));
-            lastRandomization.action();
+            var matched = options.FirstOrDefault(op => op.Label.Contains(label));
+            if (matched != null)
+            {
+                lastRandomization = matched;
+                lastRandomization.action();
+            }
             randomRect.TakeRightPart(1);
         }
 
@@ -199,7 +204,7 @@ public static partial class PawnEditor
                 .Where(static option => option != null)
                 .ToList()));
 
-        buttonRect.x += buttonRect.width * 2 + 10;
+        buttonRect.x = randomRect.xMax + 5;
 
         if (Widgets.ButtonText(buttonRect, "Load".Translate()))
             Find.WindowStack.Add(new FloatMenu(GetSaveLoadItems()
@@ -231,47 +236,107 @@ public static partial class PawnEditor
             Map map = null;
             Rot4 rot = default;
             ThingOwner parent = null;
-            yield return new SaveLoadItem<Pawn>("PawnEditor.Selected".Translate() + " " + "PawnEditor.Pawn".Translate().ToLower(), selectedPawn, new()
+            Faction originalFaction = null;
+
+            // ── Duplicate pawn (in-memory clone) ──
+            yield return new SaveItem("PawnEditor.DuplicatePawn".Translate(), () =>
             {
-                LoadLabel = "PawnEditor.LoadPawn".Translate(),
-                TypePostfix = selectedCategory.ToString(),
-                PrepareLoad = pawn =>
-                {
-                    if (pawn.Spawned)
-                    {
-                        pos = pawn.Position;
-                        rot = pawn.Rotation;
-                        map = pawn.Map;
-                        pawn.DeSpawn();
-                    }
-                    else if (pawn.SpawnedOrAnyParentSpawned)
-                    {
-                        parent = pawn.holdingOwner;
-                        pawn.holdingOwner.Remove(pawn);
-                    }
+                var stableClone = CreateStableDuplicateOrSelf(selectedPawn);
+                AddPawn(stableClone, selectedCategory).HandleResult();
+                // Aggressive graphics refresh to prevent null texture spam
+                try { EnsurePawnGraphicsInitialized(stableClone); } catch { }
+                try { stableClone.Drawer?.renderer?.SetAllGraphicsDirty(); } catch { }
+                try { PortraitsCache.SetDirty(stableClone); } catch { }
+                try { GlobalTextureAtlasManager.TryMarkPawnFrameSetDirty(stableClone); } catch { }
+                NotifyColonistBarsDirty();
+                try { Find.ColonistBar?.MarkColonistsDirty(); } catch { }
+            });
 
-                    if (Pregame) Find.GameInitData.startingPossessions.Remove(pawn);
-                },
-                OnLoad = pawn =>
-                {
-                    if (map != null)
-                        GenSpawn.Spawn(pawn, pos, map, rot, WipeMode.VanishOrMoveAside, true);
-                    else if (parent != null && !parent.TryAdd(pawn, false))
-                    {
-                        Log.Warning($"[Pawn Editor] Failed to add {pawn} to old parent {parent}.");
-                        var thing = parent.owner switch
-                        {
-                            Thing { SpawnedOrAnyParentSpawned: true } thing1 => thing1,
-                            ThingComp { parent: Thing { SpawnedOrAnyParentSpawned: true } thing2 } => thing2,
-                            _ => null
-                        };
+            // ── Save: Blueprint only (no Scribe) ──
+            yield return new SaveItem("Save".Translate() + " " + "PawnEditor.Selected".Translate().ToLower() + " " + "PawnEditor.Pawn".Translate().ToLower(), () =>
+                BlueprintLoadUtility.SavePawnBlueprint(selectedPawn, selectedCategory.ToString()));
 
-                        if (thing != null && GenPlace.TryFindPlaceSpotNear(thing.Position, Rot4.South, thing.MapHeld, pawn, false, out var spot))
-                            GenSpawn.Spawn(pawn, spot, thing.MapHeld, Rot4.South, WipeMode.VanishOrMoveAside, true);
-                    }
-                    if (Pregame) Find.GameInitData.startingPossessions.Add(pawn, new());
-                    // TabWorker<Pawn>.Notify_OpenedDialog(); should recache tables?
+            // ── Load: Replace selected pawn ──
+            yield return new LoadItem("PawnEditor.LoadPawnReplace".Translate(), () =>
+            {
+                if (selectedPawn == null) return;
+                originalFaction = selectedPawn.Faction;
+                if (selectedPawn.Spawned)
+                {
+                    pos = selectedPawn.Position;
+                    rot = selectedPawn.Rotation;
+                    map = selectedPawn.Map;
                 }
+                else if (selectedPawn.SpawnedOrAnyParentSpawned)
+                {
+                    parent = selectedPawn.holdingOwner;
+                }
+
+                var oldPawn = selectedPawn; // Capture reference before async callback
+
+                BlueprintLoadUtility.LoadPawnBlueprintReplace(oldPawn, selectedCategory.ToString(), newPawn =>
+                {
+                    LongEventHandler.ExecuteWhenFinished(() =>
+                    {
+                        // Remove old pawn properly (CharEditor-style lifecycle)
+                        if (Pregame)
+                        {
+                            Find.GameInitData.startingPossessions.Remove(oldPawn);
+                            var idx = Find.GameInitData.startingAndOptionalPawns.IndexOf(oldPawn);
+                            if (idx >= 0)
+                                Find.GameInitData.startingAndOptionalPawns[idx] = newPawn;
+                            Find.GameInitData.startingPossessions[newPawn] = new();
+                        }
+
+                        if (oldPawn.Spawned) oldPawn.DeSpawn();
+
+                        // Discard old pawn from world pawns to prevent ghost references
+                        try
+                        {
+                            if (!Pregame && Find.WorldPawns != null)
+                                Find.WorldPawns.RemoveAndDiscardPawnViaGC(oldPawn);
+                        }
+                        catch { }
+
+                        // Place new pawn
+                        if (map != null)
+                        {
+                            GenSpawn.Spawn(newPawn, pos, map, rot, WipeMode.VanishOrMoveAside, true);
+                            try { newPawn.Notify_Teleported(); } catch { }
+                        }
+                        else if (parent != null)
+                        {
+                            parent.TryAdd(newPawn, false);
+                        }
+
+                        if (!Pregame && originalFaction != null && newPawn.Faction != originalFaction)
+                            newPawn.SetFaction(originalFaction);
+
+                        // Full UI refresh (prevents TacticalGroups and similar mods from crashing)
+                        selectedPawn = newPawn;
+                        try { EnsurePawnGraphicsInitialized(newPawn); } catch { }
+                        try { newPawn.Drawer?.renderer?.SetAllGraphicsDirty(); } catch { }
+                        try { newPawn.Notify_DisabledWorkTypesChanged(); } catch { }
+                        NotifyColonistBarsDirty();
+                        try { Find.ColonistBar?.MarkColonistsDirty(); } catch { }
+                    });
+                });
+            });
+
+            // ── Load: As new clone ──
+            yield return new LoadItem("PawnEditor.LoadPawnAsClone".Translate(), () =>
+            {
+                BlueprintLoadUtility.LoadPawnBlueprint(selectedCategory.ToString(), newPawn =>
+                {
+                    LongEventHandler.ExecuteWhenFinished(() =>
+                    {
+                        AddPawn(newPawn, selectedCategory).HandleResult();
+                        try { newPawn.Drawer?.renderer?.SetAllGraphicsDirty(); } catch { }
+                        try { newPawn.Notify_DisabledWorkTypesChanged(); } catch { }
+                        NotifyColonistBarsDirty();
+                        try { Find.ColonistBar?.MarkColonistsDirty(); } catch { }
+                    });
+                });
             });
         }
 
@@ -490,5 +555,44 @@ public static partial class PawnEditor
             curRot.Rotate(RotationDirection.Counterclockwise);
 
         if (Widgets.InfoCardButtonWorker(rect.ContractedBy(8).LeftPartPixels(16).TopPartPixels(16))) Find.WindowStack.Add(new Dialog_InfoCard(selectedPawn));
+    }
+
+    private static void EnsurePawnGraphicsInitialized(Pawn pawn)
+    {
+        if (pawn == null) return;
+
+        try
+        {
+            var renderer = pawn.drawer?.renderer;
+            if (renderer == null) return;
+            var ensure = AccessTools.Method(renderer.GetType(), "EnsureGraphicsInitialized", Type.EmptyTypes);
+            ensure?.Invoke(renderer, null);
+            renderer.SetAllGraphicsDirty();
+        }
+        catch
+        {
+        }
+    }
+
+    private static void NotifyColonistBarsDirty()
+    {
+        try
+        {
+            Find.ColonistBar.MarkColonistsDirty();
+        }
+        catch
+        {
+        }
+
+        try
+        {
+            var tgType = AccessTools.TypeByName("TacticalGroups.TacticalColonistBar");
+            var markDirty = tgType == null ? null : AccessTools.Method(tgType, "MarkColonistsDirty", Type.EmptyTypes);
+            if (markDirty != null && markDirty.IsStatic)
+                markDirty.Invoke(null, null);
+        }
+        catch
+        {
+        }
     }
 }

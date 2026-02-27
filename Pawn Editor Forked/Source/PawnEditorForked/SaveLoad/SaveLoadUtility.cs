@@ -14,10 +14,12 @@ namespace PawnEditor;
 public static partial class SaveLoadUtility
 {
     private static bool currentlyWorking;
-    private static bool remapPawnThingIds;
     private static ILoadReferenceable currentItem;
     private static Pawn currentPawn;
     private static readonly HashSet<ILoadReferenceable> savedItems = new();
+    private static readonly FieldInfo needJoyTolerancesField = AccessTools.Field(typeof(Need_Joy), "tolerances");
+    private static readonly Type joyToleranceSetType = AccessTools.TypeByName("RimWorld.JoyToleranceSet");
+    private static readonly HashSet<string> fallbackWarningsLogged = new();
     public static bool UseRandomFactionOnSave = false;
 
     public static MethodInfo ReferenceLook = AccessTools.FirstMethod(typeof(Scribe_References),
@@ -132,12 +134,12 @@ public static partial class SaveLoadUtility
             }
 
 
-            remapPawnThingIds = item is Pawn pawnToLoad && pawnToLoad.thingIDNumber <= 0;
             currentlyWorking = true;
             currentItem = item as ILoadReferenceable;
             currentPawn = parentPawn;
             savedItems.Clear();
             loadInfo.Clear();
+            fallbackWarningsLogged.Clear();
             var playing = false;
             if (Current.ProgramState == ProgramState.Playing)
             {
@@ -158,10 +160,13 @@ public static partial class SaveLoadUtility
             }
 
             Scribe.loader.FinalizeLoading();
+
+            if (item is Pawn loadedPawn)
+                SanitizeLoadedPawn(loadedPawn);
+
             savedItems.Clear();
             loadInfo.Clear();
             currentlyWorking = false;
-            remapPawnThingIds = false;
             currentItem = null;
             currentPawn = null;
             UnApplyPatches();
@@ -169,7 +174,14 @@ public static partial class SaveLoadUtility
             if (playing)
                 Current.ProgramState = ProgramState.Playing;
 
-            PawnEditor.Notify_PointsUsed();
+            try
+            {
+                PawnEditor.Notify_PointsUsed();
+            }
+            catch (Exception ex)
+            {
+                Log.Error($"[Pawn Editor] Failed to refresh points after loading item '{type}'. {ex}");
+            }
 
             //cleanup loading with random faction
             if (item is Pawn)
@@ -187,6 +199,201 @@ public static partial class SaveLoadUtility
 
             }
         }));
+    }
+
+    private static void SanitizeLoadedPawn(Pawn pawn)
+    {
+        Pawn templatePawn = null;
+        try
+        {
+            templatePawn = CreateFallbackTemplatePawn(pawn);
+            SanitizeIdentityFromTemplate(pawn, templatePawn);
+            SanitizeStoryFromTemplate(pawn, templatePawn);
+            SanitizeSkillsFromTemplate(pawn, templatePawn);
+            SanitizeTraits(pawn, templatePawn);
+        }
+        catch (Exception ex)
+        {
+            Log.Warning($"[Pawn Editor] Failed base pawn fallback build for {pawn?.LabelCap ?? "<null>"}: {ex.Message}");
+        }
+
+        try
+        {
+            var needs = pawn?.needs?.AllNeeds;
+            if (needs != null)
+            {
+                needs.RemoveAll(n => n == null);
+                foreach (var need in needs)
+                {
+                    if (need is not Need_Joy joyNeed) continue;
+                    if (needJoyTolerancesField == null || joyToleranceSetType == null) continue;
+                    if (needJoyTolerancesField.GetValue(joyNeed) != null) continue;
+
+                    object tolerances = null;
+                    try
+                    {
+                        tolerances = Activator.CreateInstance(joyToleranceSetType, pawn);
+                    }
+                    catch
+                    {
+                        tolerances = Activator.CreateInstance(joyToleranceSetType);
+                    }
+
+                    if (tolerances != null)
+                        needJoyTolerancesField.SetValue(joyNeed, tolerances);
+                }
+
+                pawn.needs.AddOrRemoveNeedsAsAppropriate();
+            }
+        }
+        catch (Exception ex)
+        {
+            Log.Warning($"[Pawn Editor] Failed to sanitize loaded pawn needs for {pawn?.LabelCap ?? "<null>"}: {ex.Message}");
+        }
+
+        try
+        {
+            var relations = pawn?.relations?.DirectRelations;
+            if (relations != null)
+                relations.RemoveAll(r => r.otherPawn == null);
+        }
+        catch (Exception ex)
+        {
+            Log.Warning($"[Pawn Editor] Failed to sanitize loaded pawn relations for {pawn?.LabelCap ?? "<null>"}: {ex.Message}");
+        }
+
+        try
+        {
+            pawn?.Notify_DisabledWorkTypesChanged();
+            pawn?.drawer?.renderer?.SetAllGraphicsDirty();
+        }
+        catch
+        {
+        }
+    }
+
+    private static Pawn CreateFallbackTemplatePawn(Pawn pawn)
+    {
+        if (pawn == null) return null;
+        var kind = pawn.kindDef ?? PawnKindDefOf.Colonist;
+        var faction = pawn.Faction;
+        try
+        {
+            var request = new PawnGenerationRequest(kind, faction)
+            {
+                ForceGenerateNewPawn = true,
+                CanGeneratePawnRelations = false,
+                ForceNoGear = true
+            };
+            return PawnGenerator.GeneratePawn(request);
+        }
+        catch
+        {
+            try
+            {
+                return PawnGenerator.GeneratePawn(new PawnGenerationRequest(PawnKindDefOf.Colonist, faction));
+            }
+            catch
+            {
+                return null;
+            }
+        }
+    }
+
+    private static void SanitizeIdentityFromTemplate(Pawn pawn, Pawn template)
+    {
+        if (pawn == null) return;
+        if (pawn.kindDef == null)
+        {
+            pawn.kindDef = template?.kindDef ?? PawnKindDefOf.Colonist;
+            LogFallback(pawn, "Missing pawn kind; assigned fallback kind");
+        }
+
+        if (pawn.Name == null)
+        {
+            pawn.Name = template?.Name ?? NameTriple.FromString($"{pawn.kindDef?.label ?? "Pawn"} {Rand.Range(100, 999)}");
+            LogFallback(pawn, "Missing name; assigned fallback name");
+        }
+    }
+
+    private static void SanitizeStoryFromTemplate(Pawn pawn, Pawn template)
+    {
+        if (pawn?.story == null || template?.story == null) return;
+
+        if (pawn.story.Childhood == null && template.story.Childhood != null)
+        {
+            pawn.story.Childhood = template.story.Childhood;
+            LogFallback(pawn, "Missing childhood backstory; assigned fallback");
+        }
+
+        if (pawn.DevelopmentalStage.Adult() && pawn.story.Adulthood == null && template.story.Adulthood != null)
+        {
+            pawn.story.Adulthood = template.story.Adulthood;
+            LogFallback(pawn, "Missing adulthood backstory; assigned fallback");
+        }
+    }
+
+    private static void SanitizeSkillsFromTemplate(Pawn pawn, Pawn template)
+    {
+        if (pawn?.skills == null) return;
+
+        if (pawn.skills.skills == null)
+            pawn.skills.skills = new List<SkillRecord>();
+
+        if (pawn.skills.skills.Count == 0 && template?.skills?.skills != null)
+        {
+            foreach (var skill in template.skills.skills)
+            {
+                pawn.skills.skills.Add(new SkillRecord(pawn, skill.def)
+                {
+                    levelInt = skill.levelInt,
+                    passion = skill.passion,
+                    xpSinceLastLevel = skill.xpSinceLastLevel,
+                    xpSinceMidnight = skill.xpSinceMidnight
+                });
+            }
+
+            LogFallback(pawn, "Missing skill set; assigned fallback skills");
+            return;
+        }
+
+        foreach (var skill in pawn.skills.skills)
+        {
+            if (skill == null) continue;
+            if (skill.levelInt < 0) skill.levelInt = 0;
+            else if (skill.levelInt > 20) skill.levelInt = 20;
+
+            if (!Enum.IsDefined(typeof(Passion), skill.passion))
+            {
+                skill.passion = Passion.None;
+                LogFallback(pawn, $"Invalid passion on skill {skill.def?.defName ?? "unknown"}; reset to None");
+            }
+        }
+    }
+
+    private static void SanitizeTraits(Pawn pawn, Pawn template)
+    {
+        if (pawn?.story?.traits?.allTraits == null) return;
+
+        pawn.story.traits.allTraits.RemoveAll(t => t == null || t.def == null);
+        if (pawn.story.traits.allTraits.Count == 0 && template?.story?.traits?.allTraits != null)
+        {
+            foreach (var trait in template.story.traits.allTraits)
+            {
+                if (trait?.def == null) continue;
+                pawn.story.traits.GainTrait(new Trait(trait.def, trait.Degree, trait.ScenForced));
+                break;
+            }
+
+            LogFallback(pawn, "Missing traits; assigned fallback trait");
+        }
+    }
+
+    private static void LogFallback(Pawn pawn, string message)
+    {
+        var key = $"{pawn?.ThingID ?? "no-id"}:{message}";
+        if (!fallbackWarningsLogged.Add(key)) return;
+        Log.Warning($"[Pawn Editor] {message} for {pawn?.LabelCap ?? "<null>"}.");
     }
 
     private static void ApplyPatches()

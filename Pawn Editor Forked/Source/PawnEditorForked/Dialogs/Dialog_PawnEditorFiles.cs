@@ -39,7 +39,8 @@ public abstract class Dialog_PawnEditorFiles : Dialog_FileList
         Widgets.BeginScrollView(outRect, ref scrollPosition, viewRect);
         var num2 = 0f;
         var num3 = 0;
-        foreach (var saveFileInfo in files)
+        var filesSnapshot = files.ToList(); // Snapshot to avoid "Collection was modified" during iteration
+        foreach (var saveFileInfo in filesSnapshot)
         {
             if (num2 + vector.y >= scrollPosition.y && num2 <= scrollPosition.y + outRect.height)
             {
