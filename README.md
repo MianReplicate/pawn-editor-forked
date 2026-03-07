@@ -146,7 +146,6 @@ All original credit belongs to the authors of [Pawn Editor](https://steamcommuni
 ## 🔗 Links
 
 - 🎮 [Steam Workshop](https://steamcommunity.com/sharedfiles/filedetails/?id=3667931113)
-- 💻 [GitHub Repository](https://github.com/segaswolf/pawn-editor-forked)
 - 🐛 [Bug Reports](https://github.com/segaswolf/pawn-editor-forked/issues)
 - ☕ [Support Development (Ko-fi)](https://ko-fi.com/segaswolf)
 
