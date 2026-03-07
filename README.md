@@ -2,7 +2,7 @@
 
 > A maintained fork of [Pawn Editor](https://steamcommunity.com/sharedfiles/filedetails/?id=2920385655) for **RimWorld 1.6**
 
-[![Steam Workshop](https://img.shields.io/badge/Steam-Workshop-blue?logo=steam)](https://steamcommunity.com/sharedfiles/filedetails/?id=3308726802)
+[![Steam Workshop](https://img.shields.io/badge/Steam-Workshop-blue?logo=steam)](https://steamcommunity.com/sharedfiles/filedetails/?id=3667931113)
 [![Latest Release](https://img.shields.io/github/v/release/segaswolf/pawn-editor-forked)](https://github.com/segaswolf/pawn-editor-forked/releases/latest)
 
 ---
@@ -19,7 +19,7 @@ This fork aims to **fix those problems**, improve compatibility with popular mod
 
 ## 📢 Stay in the loop
 
-- **→ [WIP / Known Issues thread](https://steamcommunity.com/sharedfiles/filedetails/?id=3308726802)** on Steam Discussions — check here before reporting
+- **→ [WIP / Known Issues thread](https://steamcommunity.com/sharedfiles/filedetails/?id=3667931113)** on Steam Discussions — check here before reporting
 - **→ [Bug Reports](https://github.com/segaswolf/pawn-editor-forked/issues)** — open an issue and include your mod list + `Player.log`
 
 ---
@@ -74,7 +74,7 @@ This fork aims to **fix those problems**, improve compatibility with popular mod
 ## 📦 Installation
 
 1. Remove the original Pawn Editor mod
-2. Subscribe on [Steam Workshop](https://steamcommunity.com/sharedfiles/filedetails/?id=3308726802)
+2. Subscribe on [Steam Workshop](https://steamcommunity.com/sharedfiles/filedetails/?id=3667931113)
 3. Place it **after Harmony** in your load order
 4. That's it!
 
@@ -94,7 +94,25 @@ This fork aims to **fix those problems**, improve compatibility with popular mod
 
 ---
 
-## 🤝 Credits
+## ❤️ Credits & Attribution
 
-- Original mod by **ISOR3X**
-- Fork maintained by **Segas Wolf**
+All original credit belongs to the authors of [Pawn Editor](https://steamcommunity.com/sharedfiles/filedetails/?id=2920385655):
+
+- **ISOR3X** — Project lead
+- **legodude17** — Main coder
+- **Taranchuk** — Coder
+- **TreadTheDawnGames** — Community contributor
+- **mycroftjr** — Community contributor
+- **Inglix** — Community contributor
+- **fofajardo** — Community contributor
+
+**Fork maintained by:** [Segas Wolf](https://steamcommunity.com/id/SegasWolf)
+
+> This fork does not claim ownership of the original concept or implementation.  
+> If there are any concerns regarding attribution, permissions, or credit, please contact me directly.
+
+---
+
+## 📄 License
+
+The [original repository](https://github.com/ISOR3X/pawn-editor) does not include an explicit license. All original code rights belong to their respective authors. This fork is provided as-is for community use and bug fixing purposes.
