@@ -36,9 +36,9 @@ This fork is actively being developed. Many critical bugs have been fixed, but s
 
 | Area | Status |
 |------|--------|
-| Blueprint save/load (individual pawns) | 🚧 Stable, but modded race visuals may not fully restore |
+| Blueprint save/load (individual pawns) | 🚧 Stable for vanilla + FA pawns; HAR race visuals (tails, custom bodies) may not fully restore |
 | Starting Preset save/load | 🚧 Still uses old system — may fail with complex modlists |
-| Pawn duplication on modded races | 🚧 Works for vanilla/human pawns; modded features may not copy perfectly |
+| Pawn duplication on HAR races | 🚧 Works for vanilla/human pawns and FA; custom HAR features may not copy perfectly |
 
 ---
 
